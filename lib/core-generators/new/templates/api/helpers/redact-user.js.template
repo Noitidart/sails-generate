@@ -1,33 +1,76 @@
 module.exports = {
+  friendlyName: 'Delete protected attributes',
 
-
-  friendlyName: 'Redact user',
-
-
-  description: 'Destructively remove properties from the provided User record to prepare it for publication.',
-
+  description:
+    'Mutates to delete properties from the provided instance of a model. Mark properties as `protect: true` in `api/models/` to protect properties. Just pass in type of model target is, and it will figure out all nested models.',
 
   sync: true,
 
-
   inputs: {
-
-    user: {
+    // array or single instance (example: User.find())
+    target: {
       type: 'ref',
-      readOnly: false
-    }
-
+      readOnly: false,
+      required: true,
+    },
+    // the model of target
+    model: {
+      type: 'ref',
+      required: true,
+    },
+    // paths to protected attributes to keep
+    // if its an array just omit the brackets (ex: interviews.name)
+    // example: sails.helpers.redact(await User.findOne().populate('interviews'), User, ['password', 'interviews.password'])
+    keep: {
+      type: 'ref',
+      defaultsTo: [],
+      required: false,
+    },
   },
 
-
-  fn: function ({ user }) {
-    for (let [attrName, attrDef] of Object.entries(User.attributes)) {
-      if (attrDef.protect) {
-        delete user[attrName];
-      }//ﬁ
-    }//∞
-  }
-
-
+  fn: function (inputs) {
+    redactHelper({
+      target: inputs.target,
+      model: inputs.model,
+      keep: new Set(inputs.keep),
+      parentPath: '',
+    });
+  },
 };
 
+/**
+ *
+ * @param {Object} inputs
+ * @param {Object} inputs.target - same as sails.helpers.redact `target`
+ * @param {Object} inputs.model - same as sails.helpers.redact `model`
+ * @param {Set} inputs.keep - a Set of the array passed to sails.helpers.redact `keep
+ * @param {string} inputs.parentPath - that path to this instance in the parent object. if no parent object, then empty string
+ *
+ */
+function redactHelper(inputs) {
+  const instances = Array.isArray(inputs.target) ? inputs.target : [inputs.target];
+  const pathPrefix = inputs.parentPath ? `${inputs.parentPath}.` : '';
+  instances.forEach((instance) => {
+    if (instance === null || typeof instance !== 'object') return;
+
+    for (const [name, attribute] of Object.entries(inputs.model.attributes)) {
+      const path = pathPrefix + name;
+      if (attribute.protect) {
+        if (inputs.keep.has(path) === false) {
+          delete instance[name];
+        }
+      }
+    }
+    for (const association of inputs.model.associations) {
+      const path = pathPrefix + association.alias;
+      if (inputs.keep.has(path) === false) {
+        redactHelper({
+          target: instance[association.alias],
+          model: sails.models[association.collection || association.model],
+          keep: inputs.keep,
+          parentPath: path,
+        });
+      }
+    }
+  });
+}
